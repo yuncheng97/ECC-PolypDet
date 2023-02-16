@@ -1,0 +1,1 @@
+srun -N 1 -p p-V100 --cpus-per-task=4 --gres=gpu:1 --pty bash
