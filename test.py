@@ -47,49 +47,59 @@ class Test:
         ## data
         self.names      = []
         self.samples    = []
-        with open(args.data_path+'/Image_List'+args.file_name) as lines:
-            for line in lines:
-                name, boxs = line.strip().split(';')
-                boxs       = boxs.split(' ')
-                bbox       = []
-                for i in range(len(boxs)//4):
-                    xmin, ymin, xmax, ymax = boxs[4*i:4*(i+1)]
-                    bbox.append([max(int(xmin),0), max(int(ymin),0), int(xmax), int(ymax)])
-                self.samples.append([name, bbox])
-        print('test samples:', len(self.samples))
 
-        ###### inference all video clips
-        # for folder in os.listdir(args.data_path+'/TestEasyDataset/Frame'):
-        #     # if folder == '.DS_Store':
-        #     #     continue
-        #     for name in os.listdir(args.data_path+'/TestEasyDataset/Frame/'+folder):
-        #         if name.endswith('.jpg'):
-        #             # self.names.append(folder+'/'+name[0:4])
-        #             self.names.append(folder+'/'+name.split('.')[0])
+        # Choose the mode of operation: 'txtfile', 'all_video_clips', 'some_video_clips', or "single_video_clip"
+        mode = 'single_video_clip'
 
-        # print(self.names)
-        # print('test samples:', len(self.names))
+        if mode == 'txtfile':
+            # inference by txtfile
+            with open(args.data_path+'/Image_List'+args.file_name) as lines:
+                for line in lines:
+                    name, boxs = line.strip().split(';')
+                    boxs       = boxs.split(' ')
+                    bbox       = []
+                    for i in range(len(boxs)//4):
+                        xmin, ymin, xmax, ymax = boxs[4*i:4*(i+1)]
+                        bbox.append([max(int(xmin),0), max(int(ymin),0), int(xmax), int(ymax)])
+                    self.samples.append([name, bbox])
+            print('test samples:', len(self.samples))
 
-        ##### inference some video clips
-        # data_path = args.data_path+'/test'
-        # for folder in sorted(os.listdir(data_path), key=lambda x:int(x)):
-        #     if int(folder) in range(1, 2):
-        #         for name in os.listdir(data_path+'/'+folder):
-        #             self.names.append(folder+'/'+name[0:4])
-        # print('test samples:', len(self.names))
+        elif mode == 'all_video_clips':
+            ##### inference all video clips
+            for folder in os.listdir(args.data_path+'/TestEasyDataset/Frame'):
+                for name in os.listdir(args.data_path+'/TestEasyDataset/Frame/'+folder):
+                    if name.endswith('.jpg'):
+                        self.names.append(folder+'/'+name.split('.')[0])
 
-        #### inference single video clip
-        # for name in os.listdir('/mntnfs/med_data5/yuncheng/DATASET/SUN-SEG/TestHardDataset/Frame/case42'):
-        # # for name in os.listdir('/mntnfs/med_data5/yuncheng/DATASET/SCHPolyp/test/199'):
-        #     if name.endswith('.jpg'):
-        #         self.names.append('case42/'+name[0:-4])
-        #         self.names.append('32/'+name[0:-4])
-        
+            print(self.names)
+            print('test samples:', len(self.names))
+
+        elif mode == 'some_video_clips':
+            #### inference some video clips
+            data_path = args.data_path+'/test'
+            for folder in sorted(os.listdir(data_path), key=lambda x:int(x)):
+                if int(folder) in range(1, 2):
+                    for name in os.listdir(data_path+'/'+folder):
+                        self.names.append(folder+'/'+name[0:4])
+            print('test samples:', len(self.names))
+
+        else:
+            #### inference single video clip
+            for name in os.listdir('/mntnfs/med_data5/yuncheng/DATASET/CVC-VideoClinicDB/train/4'):
+                if 'mask' not in name:
+                    self.names.append('4/'+name[0:-4])
+
         ## model
-        if args.model_name == 'PolypModel':
-            self.model = PolypModel(args).cuda()
-        elif args.model_name == 'ContrastivePolypModel':
-            self.model = ContrastivePolypModel(args).cuda()
+        model_dict = {
+            'PolypModel': PolypModel,
+            'ContrastivePolypModel': ContrastivePolypModel,
+        }
+
+        if args.model_name in model_dict:
+            self.model = model_dict[args.model_name](args).cuda()
+        else:
+            print(f"Invalid model name: {args.model_name}")
+
         self.model.eval()
     
     def show(self):
@@ -184,9 +194,83 @@ class Test:
             for name in tqdm(self.names):
                 image  = cv2.imread(self.args.data_path+'/TestHardDataset/Frame/'+name+'.jpg')
                 # image  = cv2.imread(self.args.data_path+'/test/'+name+'.jpg')
-                origin = image
+                origin = image.copy()
                 mask   = cv2.imread(self.args.data_path+'/TestHardDataset/GT/'+name+'.png')
                 # mask  = cv2.imread(self.args.data_path+'/test/'+name+'.png')
+                image  = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                H, W, C = image.shape
+
+                image  = cv2.resize(image, dsize=(512, 512), interpolation=cv2.INTER_LINEAR) / 255.0
+                image  = (image - self.mean) / self.std
+                image  = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).cuda().float()
+                _, _, heatmap, whpred, offset = self.model(image)
+                outputs = decode_bbox(heatmap, whpred, offset, self.confidence)
+                results = postprocess(outputs, (H, W), self.nms_iou)
+                if results[0] is None:
+                    continue
+                confidences = results[0][:, 4]
+                bboxes      = results[0][:, :4]
+                for box, confidence in zip(bboxes, confidences):
+                    if confidence >= 0.5:
+                        ymin, xmin, ymax, xmax = box
+                        text_size = cv2.getTextSize('Polyp:%.2f' % confidence, cv2.FONT_HERSHEY_PLAIN, 1, 1)[0]
+                        cv2.rectangle(origin, (int(xmin), int(ymin)), (int(xmin)+text_size[0], int(ymin)+text_size[1]), (1,142,35), -1)
+                        origin = cv2.rectangle(origin, (int(xmin), int(ymin)), (int(xmax), int(ymax)), color=(0,255,0), thickness=5)
+                        cv2.putText(origin, 'Polyp:%.2f' % confidence, (int(xmin), int(ymin)+text_size[1]), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
+                figure_save_folder = '/mntnfs/med_data5/yuncheng/DATASET/SUN-SEG/Inference/' + name.split('/')[0]
+                # figure_save_folder = '/mntnfs/med_data5/yuncheng/DATASET/SCHPolyp/Inference/centernet_cascade_contrastive/' + name.split('/')[0]
+                figure_save_name = name.split('/')[-1] + '.png'
+                os.makedirs(figure_save_folder, exist_ok=True)  # If the directory figure_save_path does not exist, create it
+                cv2.imwrite(os.path.join(figure_save_folder, figure_save_name), np.uint8(origin * 0.8 + mask * 0.2))
+    
+    def inference_ld(self):
+        with torch.no_grad():
+            for name in tqdm(self.names):
+                figure_save_folder = '/mntnfs/med_data5/yuncheng/DATASET/LDPolypVideo/Inference/' + name.split('/')[0]
+                figure_save_name = name.split('/')[-1]+'.png'
+                os.makedirs(figure_save_folder, exist_ok=True) # If the directory figure_save_path does not exist, create it
+                image  = cv2.imread(self.args.data_path+'/Test/Images/'+name+'.jpg')
+                origin = image
+                with open(self.args.data_path+'/Test/Annotations/'+name+'.txt') as f:
+                    lines = f.readlines()
+                    if int(lines[0]) == 0:
+                        print('no polyp')
+                        cv2.imwrite(os.path.join(figure_save_folder, figure_save_name), np.uint8(origin))
+                    else:
+                        mask           = np.zeros((image.shape[0], image.shape[1], image.shape[2]))
+                        for i in range(int(lines[0])):
+                            xmin, ymin, xmax, ymax = lines[i+1].strip().split(' ')
+                            mask[int(ymin):int(ymax), int(xmin):int(xmax), :] = 255
+
+                        image  = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                        H,W,C  = image.shape
+
+                        image  = cv2.resize(image, dsize=(512, 512), interpolation=cv2.INTER_LINEAR)/255.0
+                        image  = (image-self.mean)/self.std
+                        image  = torch.from_numpy(image).permute(2,0,1).unsqueeze(0).cuda().float()
+                        _, _, heatmap, whpred, offset = self.model(image)
+                        outputs = decode_bbox(heatmap, whpred, offset, self.confidence)
+                        results = postprocess(outputs, (H,W), self.nms_iou)
+                        if results[0] is None:
+                            continue
+                        confidences = results[0][:, 4]
+                        bboxes     = results[0][:, :4]
+                        for box, confidence in zip(bboxes, confidences):
+                            if confidence >= 0.5:
+                                ymin, xmin, ymax, xmax = box
+                                origin = cv2.rectangle(origin, (int(xmin), int(ymin)), (int(xmax), int(ymax)), color=(0,255,0), thickness=5)
+                        cv2.imwrite(os.path.join(figure_save_folder, figure_save_name), np.uint8(origin*0.8+mask*0.2))
+
+    def inference_cvc(self):
+        with torch.no_grad():
+            for name in tqdm(self.names):
+                figure_save_folder = '/mntnfs/med_data5/yuncheng/DATASET/CVC-VideoClinicDB/Inference/' + name.split('/')[0]
+                figure_save_name = name.split('/')[-1]+'.png'
+                os.makedirs(figure_save_folder, exist_ok=True) # If the directory figure_save_path does not exist, create it
+
+                image  = cv2.imread(self.args.data_path+name+'.png')
+                origin = image
+                mask   = cv2.imread(self.args.data_path+name+'_mask.png')
                 image  = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 H,W,C  = image.shape
 
@@ -198,26 +282,17 @@ class Test:
                 results = postprocess(outputs, (H,W), self.nms_iou)
                 if results[0] is None:
                     continue
-                confidence = results[0][:, 4]
+                confidences = results[0][:, 4]
                 bboxes     = results[0][:, :4]
-                for box in bboxes:
-                    ymin, xmin, ymax, xmax = box
+                for box, confidence in zip(bboxes, confidences):
+                    if confidence >= 0.5:
+                        ymin, xmin, ymax, xmax = box
+                        origin = cv2.rectangle(origin, (int(xmin), int(ymin)), (int(xmax), int(ymax)), color=(0,255,0), thickness=5)
+                cv2.imwrite(os.path.join(figure_save_folder, figure_save_name), np.uint8(origin*0.8+mask*0.2))
 
-                    # text_size = cv2.getTextSize('Polyp:%.2f' % confidence[0], cv2.FONT_HERSHEY_PLAIN, 1, 1)[0]
-                    # cv2.rectangle(origin, (int(xmin), int(ymin)), (int(xmin)+text_size[0], int(ymin)+text_size[1]), (1,142,35), -1)
-                    origin = cv2.rectangle(origin, (int(xmin), int(ymin)), (int(xmax), int(ymax)), color=(0,255,0), thickness=8)
-                    # cv2.putText(origin, 'Polyp:%.2f' % confidence[0], (int(xmin), int(ymin)+text_size[1]), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
-                figure_save_folder = '/mntnfs/med_data5/yuncheng/DATASET/SUN-SEG/Inference/' + name.split('/')[0]
-                # figure_save_folder = '/mntnfs/med_data5/yuncheng/DATASET/SCHPolyp/Inference/centernet_cascade_contrastive/' + name.split('/')[0]
-                figure_save_name = name.split('/')[-1]+'.png'
-                if not os.path.exists(figure_save_folder):
-                    os.makedirs(figure_save_folder) # 如果不存在目录figure_save_path，则创建
-                # cv2.imwrite(os.path.join(figure_save_folder, figure_save_name), np.uint8(origin*0.5+mask*0.5))
-                cv2.imwrite(os.path.join(figure_save_folder, figure_save_name), np.uint8(origin))
-    
     def create_gif(self, path):
         frames = []
-        for name in tqdm(sorted(os.listdir(path))):
+        for name in tqdm(sorted(os.listdir(path), key=lambda x: int(x.split('.')[0].split('-')[1]))):
             image = imageio.imread(path+'/'+name)
             # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             frames.append(image)
@@ -294,13 +369,13 @@ def is_valid_bbox(args):
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--snapshot'  , type=str, default=None    )
+    # parser.add_argument('--snapshot'  , type=str, default=None    )
     parser.add_argument('--data_path' , type=str, default=None    )
     parser.add_argument('--test_data' , type=str, default=None    )
     parser.add_argument('--file_name' , type=str, default=None    )
     parser.add_argument('--backbone'  , type=str, default=None    )
     parser.add_argument('--model_name', type=str, default=None    )
-    # parser.add_argument('--snapshot'  , default='/mntnfs/med_data5/yuncheng/centernet/centernet/model/centernet_sun_cascade_contrast_hard/best.pth'    )
+    parser.add_argument('--snapshot'  , default='/mntnfs/med_data5/yuncheng/centernet/centernet/model/centernet_sun_cascade_contrast_hard/best.pth'    )
     args = parser.parse_args()
 
     print('Testing Model:', args.model_name)
@@ -308,8 +383,14 @@ if __name__=='__main__':
     print("Testing Dataset:", args.data_path)
     t = Test(args)
 
-    t.accuracy()
-    # t.show()
-    # t.test()
-    # t.inference()
-    # t.create_gif('/mntnfs/med_data5/yuncheng/DATASET/SUN-SEG/Inference/case42')
+    task = 'inference'
+
+    tasks = {
+        'accuracy': t.accuracy,
+        'show': t.show,
+        'inference': t.inference_cvc,
+    }
+    if task in task:
+        tasks[task]()
+        if task == 'inference':
+            t.create_gif('/mntnfs/med_data5/yuncheng/DATASET/CVC-VideoClinicDB/Inference/4')
