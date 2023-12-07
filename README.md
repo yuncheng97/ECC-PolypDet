@@ -86,6 +86,12 @@ After hard sample mining, the weight of each training image will be saved in ./r
 - Qualitative comparisons 
 ![sample](./figures/visualization.png)
 
+## Pretrained
+
+download the pretrained backbone models and put them in the pretrained folder
+- PVT[Baidu:bhrf](https://pan.baidu.com/s/1YT-lBXbFXNVKui-8EN1Mvg?pwd=bhrf)
+- ResNet50[Baidu:hc2h](https://pan.baidu.com/s/1BstgyMaBG6yO_8QB3I6pAw?pwd=hc2h)
+- ResNet101[Baidu:34an](https://pan.baidu.com/s/1GjnHTHaGgv_fIj6iDUW0qw?pwd=34an)
 ## Citation
 - If you find this work is helpful, please cite our paper
 ```
