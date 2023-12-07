@@ -1,4 +1,4 @@
-## [ECC-PolypDet: Enhanced CenterNet with Contrastive Learning for Automatic Polyp Detection]
+## [ECC-PolypDet: Enhanced CenterNet with Contrastive Learning for Automatic Polyp Detection](https://ieeexplore.ieee.org/abstract/document/10323147)
 by Yuncheng Jiang, Zixun Zhang, Yiwen Hu, Guanbin Li, Xiang Wan, Song Wu, Shuguang Cui, Silin Huang, Zhen Li
 
 ## Introduction
