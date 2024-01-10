@@ -336,8 +336,8 @@ class CenterNet(nn.Module):
         return heatmap, whpred, offset
     
     def initialize(self):
-        if self.args.snapshot:
-            self.load_state_dict(torch.load(self.args.snapshot))
+        if self.args.pretrained:
+            self.load_state_dict(torch.load(self.args.pretrained))
         else:
             weight_init(self)
 
