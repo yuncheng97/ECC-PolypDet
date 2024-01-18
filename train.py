@@ -312,14 +312,20 @@ class Validation:
         self.model = model
         self.model.eval()
         with torch.no_grad():
-            start = time.time()
             num_tps, num_fps, num_dets, num_gts = 0, 0, 0, 0
+            seconds = 0
             for idx in range(len(self.samples)):
                 image, gt_bboxs, H, W = self._prepare_image(idx)
                 if self.model_name == 'CenterNet':
+                    start = time.time()
                     heatmap, whpred, offset = self.model(image)
+                    end = time.time()
+                    seconds += end - start
                 elif self.model_name == 'ECCPolypDet':
+                    start = time.time()
                     _, _, heat, heatmap, whpred, offset = self.model(image)
+                    end = time.time()
+                    seconds += end - start
 
                 outputs = decode_bbox(heatmap, whpred, offset, self.confidence)
                 results = postprocess(outputs, (H, W), self.nms_iou)
@@ -332,8 +338,6 @@ class Validation:
                 num_tp, num_fp, num_det, num_gt = num_iou(bboxs, gt_bboxs)
                 num_tps, num_fps, num_dets, num_gts = num_tps + num_tp, num_fps + num_fp, num_dets + num_det, num_gts + num_gt
         
-        end = time.time()
-        seconds = end - start
         fps  = len(self.samples) / seconds
         precision, recall, f1, f2 = self._calculate_metrics(num_tps, num_dets, num_gts)
         tables  = [[epoch, num_tps, num_fps, num_dets, num_gts, precision, recall, f1, f2, fps]]
